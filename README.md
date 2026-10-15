@@ -38,6 +38,17 @@ API docs: http://127.0.0.1:8000/docs
 
 The backend uses versioned local JSON datasets in `backend/data/` by default. MongoDB Atlas is optional; copy `backend/.env.example` to `backend/.env` and configure `MONGODB_URI` only if you want the optional database overlay. The `.env` file must remain untracked.
 
+## Publish the frontend and backend
+
+The GitHub repository homepage shows this README; GitHub does not automatically run the frontend. The live frontend will be published separately at [https://skavyashree07-jpg.github.io/Chaos_Nova-GSK/](https://skavyashree07-jpg.github.io/Chaos_Nova-GSK/) by the Pages workflow.
+
+1. In Render, create a Blueprint from this repository and apply the root `render.yaml`. Wait for the FastAPI service to deploy and copy its public HTTPS base URL (the URL should end in `.onrender.com`, **not** `/docs`).
+2. In GitHub, open **Settings → Pages** and set the build and deployment source to **GitHub Actions**.
+3. In GitHub, open **Settings → Secrets and variables → Actions → Variables**, add the repository variable `VITE_BACKEND_URL` with the Render base URL (for example, `https://your-service.onrender.com`; do not append `/docs`).
+4. Re-run the **Deploy frontend to GitHub Pages** workflow, or push a frontend change. The Render service's `CORS_ORIGINS` is configured by `render.yaml` for the Pages origin.
+
+The frontend workflow can publish the site before the backend URL is configured, but symptom requests will show a configuration error until `VITE_BACKEND_URL` is set. Changes to the frontend workflow need GitHub Pages to be enabled once in repository settings.
+
 ## Run the earlier Sakhi prototype (optional)
 
 ```bash

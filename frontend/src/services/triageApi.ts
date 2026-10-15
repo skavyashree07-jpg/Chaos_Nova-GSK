@@ -12,7 +12,10 @@ export interface TriageResponse {
   disclaimer: string;
 }
 
-const backendUrl = (import.meta.env.VITE_BACKEND_URL || 'http://127.0.0.1:8000').replace(/\/+$/, '');
+const backendUrl = (
+  import.meta.env.VITE_BACKEND_URL ||
+  (import.meta.env.DEV ? 'http://127.0.0.1:8000' : '')
+).replace(/\/+$/, '');
 
 function isTriageResponse(value: unknown): value is TriageResponse {
   if (!value || typeof value !== 'object') return false;
@@ -42,6 +45,10 @@ export async function requestTriage(
   lang: string,
   signal?: AbortSignal,
 ): Promise<TriageResponse> {
+  if (!backendUrl) {
+    throw new Error('The symptom service is not configured. Set the VITE_BACKEND_URL deployment variable.');
+  }
+
   const response = await fetch(`${backendUrl}/triage`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
