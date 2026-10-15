@@ -1,20 +1,30 @@
-<div align="center">
-<img width="1200" height="475" alt="GHBanner" src="https://ai.google.dev/static/site-assets/images/share-ais-513315318.png" />
-</div>
+# Nova GSK frontend
 
-# Run and deploy your AI Studio app
+The symptom translator sends symptom text to the Deha-Chitra FastAPI service in `../backend`.
 
-This contains everything you need to run your app locally.
+## Run locally
 
-View your app in AI Studio: https://ai.studio/apps/d3a0a12d-7b78-4176-9efb-94cc0aca06b7
+Requirements: Node.js and Python 3.10+.
 
-## Run Locally
+1. In a terminal, start the backend:
 
-**Prerequisites:**  Node.js
+   ```powershell
+   cd backend
+   python -m venv .venv
+   .venv\Scripts\Activate.ps1
+   python -m pip install -r requirements.txt
+   uvicorn app:app --reload --port 8000
+   ```
 
+2. In a second terminal, start the frontend:
 
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+   ```powershell
+   cd frontend
+   npm install
+   Copy-Item .env.example .env.local
+   npm run dev
+   ```
+
+The frontend defaults to `http://127.0.0.1:8000`. Set `VITE_BACKEND_URL` in `frontend/.env.local` if the backend runs elsewhere. The local backend already allows the Vite development origin (`http://localhost:3000`).
+
+The translator calls `POST /triage`; that endpoint also normalizes the text before applying the backend's care rules. The frontend shows an error if the backend cannot be reached. Symptom descriptions are sent to the configured backend for processing; configure HTTPS and appropriate CORS origins before deployment.

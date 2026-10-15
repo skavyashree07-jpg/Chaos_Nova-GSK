@@ -1,29 +1,19 @@
-import React, { useState, useEffect } from 'react';
-import { NavigationTab, LanguageCode, ClinicalConcept, BiologicalPathway } from '../types';
-import { 
-  DEFAULT_TRANSLATION_STATEMENT, 
-  INSPIRATION_PROMPTS, 
-  SAMPLE_CLINICAL_CONCEPTS, 
-  DEFAULT_BIOLOGICAL_PATHWAY 
-} from '../data/pcosData';
-import { 
+import React, { useEffect, useRef, useState } from 'react';
+import { NavigationTab, LanguageCode } from '../types';
+import { DEFAULT_TRANSLATION_STATEMENT, INSPIRATION_PROMPTS } from '../data/pcosData';
+import { requestTriage, TriageResponse } from '../services/triageApi';
+import {
   Sparkles, 
   Mic, 
   MicOff, 
   ArrowRight, 
-  ArrowDown, 
-  Calendar, 
-  Fingerprint, 
   Lock, 
   RotateCcw, 
   Info, 
   FileText, 
   ShieldCheck, 
-  Layers, 
+  Layers,
   HeartHandshake, 
-  Volume2, 
-  CheckCircle2,
-  Share2
 } from 'lucide-react';
 
 interface SymptomTranslatorViewProps {
@@ -41,91 +31,62 @@ export const SymptomTranslatorView: React.FC<SymptomTranslatorViewProps> = ({
   const [activeInputLanguage, setActiveInputLanguage] = useState<string>('English');
   const [isListening, setIsListening] = useState<boolean>(false);
   const [isTranslating, setIsTranslating] = useState<boolean>(false);
-  const [hasTranslated, setHasTranslated] = useState<boolean>(true);
+  const [hasTranslated, setHasTranslated] = useState<boolean>(false);
+  const [triageResult, setTriageResult] = useState<TriageResponse | null>(null);
+  const [requestError, setRequestError] = useState<string | null>(null);
   const [speechFeedback, setSpeechFeedback] = useState<string>('Ready to listen • Hindi / Tamil / Eng');
-  const [recognizedVoiceText, setRecognizedVoiceText] = useState<string>('');
+  const requestController = useRef<AbortController | null>(null);
 
-  // Handle Inspiration Prompt Click
+  useEffect(() => () => requestController.current?.abort(), []);
+
+  const invalidateTriage = () => {
+    requestController.current?.abort();
+    setIsTranslating(false);
+    setHasTranslated(false);
+    setTriageResult(null);
+    setRequestError(null);
+  };
+
   const handleSelectInspiration = (promptText: string) => {
     setStatement(promptText);
-    triggerTranslation(promptText);
+    void triggerTranslation(promptText);
   };
 
-  // Determine concepts based on user statement keywords
-  const getConceptsForStatement = (text: string): ClinicalConcept[] => {
-    const lower = text.toLowerCase();
-    const result: ClinicalConcept[] = [];
-
-    // Irregular periods
-    if (lower.includes('period') || lower.includes('cycle') || lower.includes('पीरियड') || lower.includes('month') || lower.includes('spotting') || lower.includes('delay')) {
-      result.push({
-        id: 'oligomenorrhea',
-        name: 'Oligomenorrhea',
-        subtitle: 'Irregular ovulation pattern',
-        badge: 'Menstrual Rhythm',
-        definition: 'Periods occurring at intervals greater than 35 days or fewer than 6 to 8 cycles per year.',
-        plainContext: "When the body's hormonal cascade pauses follicular maturity, cycles stretch out unpredictably without a regular monthly rhythm.",
-        iconName: 'calendar'
-      });
+  const getBackendLanguage = () => {
+    switch (activeInputLanguage) {
+      case 'Hindi (हिन्दी)': return 'hi';
+      case 'Hinglish': return 'hi_rom';
+      case 'Kannada (ಕನ್ನಡ)': return 'kn';
+      case 'Tamil (தமிழ்)': return 'ta';
+      default: return 'en';
     }
-
-    // Dark patches / insulin resistance
-    if (lower.includes('dark') || lower.includes('patch') || lower.includes('neck') || lower.includes('velvet') || lower.includes('sugar') || lower.includes('hunger') || lower.includes('fatigue')) {
-      result.push({
-        id: 'acanthosis-nigricans',
-        name: 'Acanthosis Nigricans',
-        subtitle: 'Insulin resistance biomarker',
-        badge: 'Insulin Resistance',
-        definition: 'Hyperpigmented, velvety skin textures typically manifesting in flexural areas like the posterior neck, axillae, or groin.',
-        plainContext: 'Elevated circulating insulin stimulates epidermal keratinocytes and dermal fibroblasts, creating subtle texture and color shifts.',
-        iconName: 'fingerprint'
-      });
-    }
-
-    // Hair / Hirsutism
-    if (lower.includes('hair') || lower.includes('jaw') || lower.includes('chin') || lower.includes('बाल') || lower.includes('chehre') || lower.includes('hirsutism')) {
-      result.push({
-        id: 'mild-hirsutism',
-        name: 'Mild Hirsutism',
-        subtitle: 'Androgen excess indicator',
-        badge: 'Androgen Sign',
-        definition: 'Coarser, darker terminal hair growth following male-pattern distribution (chin, upper lip, chest, or lower abdomen).',
-        plainContext: 'Hair follicles with heightened androgen sensitivity convert fine vellus hairs into thicker strands over time.',
-        iconName: 'sparkles'
-      });
-    }
-
-    // Acne / inflammation
-    if (lower.includes('acne') || lower.includes('pimple') || lower.includes('bloat') || lower.includes('joint') || lower.includes('gut')) {
-      result.push({
-        id: 'inflammatory-flare',
-        name: 'Hyperandrogenic Cystic Lesions',
-        subtitle: 'Immune & sebaceous flare',
-        badge: 'Inflammatory Axis',
-        definition: 'Deep dermal inflammatory nodules mediated by androgen-primed sebaceous lipid oxidation.',
-        plainContext: 'Elevated circulating androgens stimulate hyper-keratinization within follicular canals, trapping micro-bacteria.',
-        iconName: 'calendar'
-      });
-    }
-
-    // Fallback to default 3 concepts if too short or generic
-    if (result.length === 0) {
-      return SAMPLE_CLINICAL_CONCEPTS.default;
-    }
-    return result;
   };
 
-  const currentConcepts = getConceptsForStatement(statement);
-
-  const triggerTranslation = (customText?: string) => {
+  const triggerTranslation = async (customText?: string) => {
+    const text = customText ?? statement;
+    requestController.current?.abort();
+    const controller = new AbortController();
+    requestController.current = controller;
     setIsTranslating(true);
-    setTimeout(() => {
-      setIsTranslating(false);
+    setRequestError(null);
+    setHasTranslated(false);
+    try {
+      const result = await requestTriage(text, getBackendLanguage(), controller.signal);
+      setTriageResult(result);
       setHasTranslated(true);
-    }, 400);
+    } catch (error) {
+      if (!controller.signal.aborted) {
+        setTriageResult(null);
+        setRequestError(error instanceof Error ? error.message : 'Unable to connect to the symptom service.');
+      }
+    } finally {
+      if (!controller.signal.aborted) {
+        setIsTranslating(false);
+      }
+    }
   };
 
-  // Web Speech API / Simulated Voice Intake
+  // Web Speech API voice intake
   const toggleVoiceIntake = () => {
     if (isListening) {
       setIsListening(false);
@@ -143,7 +104,11 @@ export const SymptomTranslatorView: React.FC<SymptomTranslatorViewProps> = ({
         const recognition = new SpeechRecognition();
         recognition.continuous = false;
         recognition.interimResults = true;
-        recognition.lang = activeInputLanguage === 'Hindi (हिन्दी)' ? 'hi-IN' : activeInputLanguage === 'Tamil (தமிழ்)' ? 'ta-IN' : 'en-US';
+        recognition.lang = activeInputLanguage === 'Hindi (हिन्दी)' ? 'hi-IN'
+          : activeInputLanguage === 'Tamil (தமிழ்)' ? 'ta-IN'
+            : activeInputLanguage === 'Kannada (ಕನ್ನಡ)' ? 'kn-IN'
+              : 'en-US';
+        let transcript = '';
 
         recognition.onstart = () => {
           setIsListening(true);
@@ -151,11 +116,11 @@ export const SymptomTranslatorView: React.FC<SymptomTranslatorViewProps> = ({
         };
 
         recognition.onresult = (event: any) => {
-          const transcript = Array.from(event.results)
+          transcript = Array.from(event.results)
             .map((res: any) => res[0].transcript)
             .join('');
+          invalidateTriage();
           setStatement(transcript);
-          setRecognizedVoiceText(transcript);
         };
 
         recognition.onerror = () => {
@@ -166,7 +131,7 @@ export const SymptomTranslatorView: React.FC<SymptomTranslatorViewProps> = ({
         recognition.onend = () => {
           setIsListening(false);
           setSpeechFeedback('Finished listening. Click Translate to process signals.');
-          triggerTranslation();
+          if (transcript) void triggerTranslation(transcript);
         };
 
         recognition.start();
@@ -176,29 +141,15 @@ export const SymptomTranslatorView: React.FC<SymptomTranslatorViewProps> = ({
       }
     }
 
-    // Voice Simulation fallback with realistic multilingual phrases
-    setIsListening(true);
-    setSpeechFeedback('Listening to natural speech cadence...');
-    setTimeout(() => {
-      const demoVoicePrompts = [
-        "Periods come once in 3-4 months and sudden coarse chin hair keeps reappearing",
-        "अनियमित पीरियड्स और गर्दन के पीछे डार्क वेलवेटी पैचेस",
-        "Feeling severe post-meal afternoon crashes and unexpected hair on my jawline"
-      ];
-      const randomPrompt = demoVoicePrompts[Math.floor(Math.random() * demoVoicePrompts.length)];
-      setStatement(randomPrompt);
-      setIsListening(false);
-      setSpeechFeedback('Voice captured successfully • Ready to translate');
-      triggerTranslation(randomPrompt);
-    }, 2400);
+    setSpeechFeedback('Voice input is not supported in this browser. Please type your description.');
   };
 
   const inputLanguages = [
     { label: 'English' },
     { label: 'Hindi (हिन्दी)' },
     { label: 'Hinglish' },
+    { label: 'Kannada (ಕನ್ನಡ)' },
     { label: 'Tamil (தமிழ்)' },
-    { label: 'Bengali (বাংলা)' },
   ];
 
   return (
@@ -208,7 +159,7 @@ export const SymptomTranslatorView: React.FC<SymptomTranslatorViewProps> = ({
       <div className="flex justify-start">
         <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full bg-[#EDF2EE] border border-[#C7E7D3] text-[#304D3E] text-xs font-semibold tracking-wide">
           <span className="w-2 h-2 rounded-full bg-[#4D6A5A] animate-pulse"></span>
-          <span>🌿 Empathetic Clinical Sanctuary • Reviewed with Women's Health &amp; OB/GYN Specialists</span>
+          <span>🌿 A supportive, non-diagnostic symptom guide</span>
         </div>
       </div>
 
@@ -219,9 +170,8 @@ export const SymptomTranslatorView: React.FC<SymptomTranslatorViewProps> = ({
           <span className="italic font-serif">what your body is whispering.</span>
         </h1>
         <p className="font-sans text-base sm:text-lg text-[#544342] leading-relaxed max-w-3xl">
-          Share your feelings, cycle shifts, skin changes, or sensations in everyday words or your
-          mother tongue. We translate them into clear biological pathways and compassionate clinical
-          terms—never judging or diagnosing, always honoring your experience.
+          Describe cycle changes, skin changes, or other sensations in your own words. The symptom
+          service looks for supported symptom concepts and provides non-diagnostic next-step guidance.
         </p>
       </div>
 
@@ -255,7 +205,10 @@ export const SymptomTranslatorView: React.FC<SymptomTranslatorViewProps> = ({
             <div className="relative rounded-xl border border-[#D9CDC1] bg-[#FDFBF7] p-3.5 focus-within:border-[#8B3E42] focus-within:ring-2 focus-within:ring-[#8B3E42]/10 transition-all">
               <textarea
                 value={statement}
-                onChange={(e) => setStatement(e.target.value)}
+                onChange={(e) => {
+                  invalidateTriage();
+                  setStatement(e.target.value);
+                }}
                 placeholder="Type in your own words, e.g. 'My periods are unpredictable, getting unexpected chin hairs, and extreme sugar crashes...'"
                 rows={4}
                 className="w-full bg-transparent resize-none border-none outline-none text-[#221A16] placeholder-[#766A65]/70 text-base leading-relaxed font-sans"
@@ -263,11 +216,14 @@ export const SymptomTranslatorView: React.FC<SymptomTranslatorViewProps> = ({
               <div className="flex items-center justify-between pt-2 border-t border-[#ECE4DA]/70 text-xs text-[#766A65]">
                 <div className="flex items-center gap-1.5">
                   <Lock className="w-3.5 h-3.5 text-[#4D6A5A]" />
-                  <span>Strictly confidential • Private in-browser session</span>
+                  <span>Sent to the configured symptom service for processing</span>
                 </div>
                 {statement && (
                   <button
-                    onClick={() => setStatement('')}
+                    onClick={() => {
+                      invalidateTriage();
+                      setStatement('');
+                    }}
                     className="hover:text-[#8B3E42] transition-colors font-medium cursor-pointer"
                   >
                     Clear
@@ -323,13 +279,13 @@ export const SymptomTranslatorView: React.FC<SymptomTranslatorViewProps> = ({
             
             <div className="space-y-2">
               <div className="flex items-center justify-between">
-                <span className="text-sm font-semibold text-[#221A16]">Voice Intake</span>
+                <span className="text-sm font-semibold text-[#221A16]">Voice Input</span>
                 <span className="text-[11px] px-2 py-0.5 rounded-full bg-[#EDF2EE] text-[#4D6A5A] font-medium">
-                  Any Language
+                  Browser supported
                 </span>
               </div>
               <p className="text-xs text-[#544342] leading-relaxed">
-                Speak in your comfort language—Hindi, Tamil, Bengali, Hinglish, or English. We listen with care.
+                Speech recognition availability depends on your browser. Supported backend language options include English, Hindi, Hinglish, Kannada, and Tamil.
               </p>
             </div>
 
@@ -377,33 +333,38 @@ export const SymptomTranslatorView: React.FC<SymptomTranslatorViewProps> = ({
         {/* Big Action Button: Translate & Understand My Signals */}
         <div className="pt-6 border-t border-[#ECE4DA]/60 mt-6 flex justify-end">
           <button
-            onClick={() => triggerTranslation()}
+            onClick={() => void triggerTranslation()}
             disabled={!statement.trim() || isTranslating}
             className="w-full sm:w-auto px-7 py-3.5 bg-[#8B3E42] hover:bg-[#6E272C] disabled:bg-[#8B3E42]/50 text-white rounded-xl font-medium text-sm flex items-center justify-center gap-2 shadow-sm hover:shadow transition-all cursor-pointer"
           >
             <RotateCcw className={`w-4 h-4 ${isTranslating ? 'animate-spin' : ''}`} />
-            <span>{isTranslating ? 'Synthesizing Biological Pathways...' : 'Translate & Understand My Signals'}</span>
+            <span>{isTranslating ? 'Checking symptoms...' : 'Check symptoms and next steps'}</span>
           </button>
         </div>
+        {requestError && (
+          <p role="alert" className="mt-3 text-sm text-[#BA1A1A]">
+            {requestError} Make sure the backend is running and VITE_BACKEND_URL points to it.
+          </p>
+        )}
 
       </div>
 
       {/* Synthesized Translation & Hallmarks Section */}
-      {hasTranslated && (
+      {hasTranslated && triageResult && (
         <section className="space-y-6 pt-2">
           
           <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-2 border-b border-[#ECE4DA] pb-3">
             <div>
               <div className="flex items-center gap-1.5 text-xs font-semibold text-[#8B3E42] uppercase tracking-wider">
                 <Sparkles className="w-3.5 h-3.5" />
-                <span>Synthesized Translation &amp; Hallmarks</span>
+                <span>Symptom matching &amp; next-step guidance</span>
               </div>
               <h2 className="font-serif text-2xl sm:text-3xl text-[#221A16] font-medium mt-1">
-                Clinical Clarifier &amp; Biological Connections
+                Results from the symptom service
               </h2>
             </div>
             <div className="text-xs text-[#766A65]">
-              Showing real-time interpretation for: <span className="font-semibold text-[#4D6A5A]">Verified Patient Intake</span>
+              Processed by the <span className="font-semibold text-[#4D6A5A]">symptom-to-care service</span>
             </div>
           </div>
 
@@ -424,118 +385,82 @@ export const SymptomTranslatorView: React.FC<SymptomTranslatorViewProps> = ({
                 </p>
               </div>
 
-              {/* Identified Clinical Concepts */}
-              <div className="space-y-4">
+              <div className="bg-white rounded-2xl border border-[#ECE4DA] p-6 space-y-4">
                 <div className="flex items-center gap-2 text-xs font-semibold text-[#766A65] uppercase tracking-wider">
                   <ShieldCheck className="w-4 h-4 text-[#4D6A5A]" />
-                  <span>Identified Clinical Concepts (Non-Diagnostic)</span>
+                  <span>Symptom concepts matched by the service</span>
                 </div>
-
-                <div className="space-y-3.5">
-                  {currentConcepts.map((concept) => (
-                    <div 
-                      key={concept.id}
-                      className="bg-white rounded-xl border border-[#ECE4DA] p-5 shadow-xs hover:border-[#8B3E42]/40 transition-colors"
-                    >
-                      <div className="flex items-start justify-between gap-3">
-                        <div className="space-y-1">
-                          <div className="flex items-center gap-2 flex-wrap">
-                            <span className="font-serif text-base font-semibold text-[#8B3E42]">
-                              {concept.name}
-                            </span>
-                            <span className="text-xs text-[#766A65]">• {concept.subtitle}</span>
-                          </div>
-                          <p className="text-xs sm:text-[13px] text-[#221A16] font-medium leading-relaxed">
-                            {concept.definition}
-                          </p>
-                        </div>
-                        <div className="p-2 rounded-lg bg-[#F5EFE6] text-[#766A65] shrink-0">
-                          {concept.iconName === 'calendar' && <Calendar className="w-4 h-4" />}
-                          {concept.iconName === 'fingerprint' && <Fingerprint className="w-4 h-4" />}
-                          {concept.iconName === 'sparkles' && <Sparkles className="w-4 h-4" />}
-                          {concept.iconName === 'shield' && <ShieldCheck className="w-4 h-4" />}
-                        </div>
-                      </div>
-
-                      <div className="mt-3 pt-3 border-t border-[#ECE4DA]/70 bg-[#FDFBF7] -mx-5 -mb-5 p-4 rounded-b-xl text-xs text-[#544342] leading-relaxed">
-                        <strong className="text-[#304D3E] font-medium">Plain language context: </strong>
-                        {concept.plainContext}
-                      </div>
-                    </div>
-                  ))}
-                </div>
+                {triageResult.concepts.length ? (
+                  <div className="flex flex-wrap gap-2">
+                    {triageResult.concepts.map((concept) => (
+                      <span key={concept} className="rounded-full bg-[#EDF2EE] px-3 py-1.5 text-xs font-medium text-[#304D3E]">
+                        {concept.replace(/_/g, ' ')}
+                      </span>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-sm text-[#544342]">No symptom concepts were confidently matched.</p>
+                )}
+                {triageResult.summary_lines.length > 0 && (
+                  <ul className="list-disc space-y-2 pl-5 text-sm text-[#544342]">
+                    {triageResult.summary_lines.map((line, index) => <li key={`${index}-${line}`}>{line}</li>)}
+                  </ul>
+                )}
+                {triageResult.doctor_questions.length > 0 && (
+                  <div className="border-t border-[#ECE4DA] pt-4">
+                    <h3 className="text-sm font-semibold text-[#221A16]">Questions to discuss with a healthcare professional</h3>
+                    <ul className="mt-2 list-disc space-y-2 pl-5 text-sm text-[#544342]">
+                      {triageResult.doctor_questions.map((question, index) => <li key={`${index}-${question}`}>{question}</li>)}
+                    </ul>
+                  </div>
+                )}
               </div>
 
             </div>
 
-            {/* Right Column: Biological Pathways (Vertical interconnected flow) */}
+            {/* Backend care guidance */}
             <div className="lg:col-span-5 flex flex-col justify-between space-y-6">
-              
-              <div className="bg-white rounded-2xl border border-[#ECE4DA] p-6 space-y-5">
-                <div className="space-y-1">
-                  <div className="flex items-center justify-between">
-                    <h3 className="font-serif text-lg font-semibold text-[#221A16]">
-                      {DEFAULT_BIOLOGICAL_PATHWAY.title}
-                    </h3>
-                    <Layers className="w-4 h-4 text-[#8B3E42]" />
+              <div className={`rounded-2xl border p-6 space-y-4 ${
+                ['urgent', 'emergency'].includes(triageResult.care_level)
+                  ? 'border-[#BA1A1A]/40 bg-[#FFF4F2]'
+                  : 'border-[#ECE4DA] bg-white'
+              }`}>
+                <div>
+                  <div className="flex items-center gap-2 text-xs font-semibold text-[#8B3E42] uppercase tracking-wider">
+                    <Info className="h-4 w-4" />
+                    Recommended next step
                   </div>
-                  <p className="text-xs text-[#766A65]">
-                    {DEFAULT_BIOLOGICAL_PATHWAY.intro}
+                  <p className="mt-2 text-xs font-semibold uppercase tracking-wide text-[#766A65]">
+                    {triageResult.care_level.replace(/_/g, ' ')}
+                  </p>
+                  <p className="mt-2 text-sm leading-relaxed text-[#221A16]">{triageResult.care_guidance}</p>
+                </div>
+                <div className="border-t border-[#ECE4DA] pt-4">
+                  <h3 className="text-sm font-semibold text-[#221A16]">Educational pattern strength</h3>
+                  <p className="mt-1 text-sm text-[#544342]">
+                    {triageResult.pattern_suppressed ? 'Not shown by the service for this input.' : triageResult.pattern.replace(/_/g, ' ')}
+                  </p>
+                  <p className="mt-2 text-xs leading-relaxed text-[#766A65]">
+                    This pattern is educational only and is not a diagnosis.
                   </p>
                 </div>
-
-                {/* 3 Steps in Flow */}
-                <div className="space-y-3">
-                  {DEFAULT_BIOLOGICAL_PATHWAY.steps.map((step, index) => (
-                    <React.Fragment key={step.stepNumber}>
-                      <div className="bg-[#FDFBF7] border border-[#ECE4DA] rounded-xl p-4 transition-all hover:bg-[#FBF2F2]/50">
-                        <div className="flex items-center justify-between text-xs font-semibold mb-1">
-                          <span className="text-[#221A16]">{step.title}</span>
-                          <span className="text-[#8B3E42] text-[11px] font-sans">{step.axis}</span>
-                        </div>
-                        <p className="text-xs text-[#544342] leading-relaxed">
-                          {step.description}
-                        </p>
-                      </div>
-
-                      {index < DEFAULT_BIOLOGICAL_PATHWAY.steps.length - 1 && (
-                        <div className="flex justify-center -my-1 text-[#8B3E42]">
-                          <ArrowDown className="w-4 h-4 animate-bounce" />
-                        </div>
-                      )}
-                    </React.Fragment>
-                  ))}
-                </div>
-
-                {/* Summary note below steps */}
-                <p className="text-xs text-[#766A65] leading-relaxed pt-2 border-t border-[#ECE4DA]/70">
-                  {DEFAULT_BIOLOGICAL_PATHWAY.summary}
+                <p className="border-t border-[#ECE4DA] pt-4 text-xs leading-relaxed text-[#766A65]">
+                  {triageResult.disclaimer}
                 </p>
-
-                {/* Callout Box: What this pattern indicates */}
-                <div className="rounded-xl bg-[#F5EFE6] border border-[#ECE4DA] p-4 text-xs text-[#544342] space-y-1.5">
-                  <div className="flex items-center gap-1.5 font-semibold text-[#221A16]">
-                    <Info className="w-4 h-4 text-[#4D6A5A]" />
-                    <span>What this pattern indicates</span>
-                  </div>
-                  <p className="leading-relaxed">
-                    {DEFAULT_BIOLOGICAL_PATHWAY.indicationNote}
-                  </p>
-                </div>
               </div>
 
             </div>
 
           </div>
 
-          {/* Turn Your Translated Signals Into Clear Action (3 Next Steps) */}
+          {/* Additional resources */}
           <div className="pt-8 space-y-4">
             <div className="text-xs font-semibold text-[#8B3E42] uppercase tracking-wider flex items-center gap-1.5">
               <ArrowRight className="w-3.5 h-3.5" />
-              <span>Guided Next Steps</span>
+              <span>Additional resources</span>
             </div>
             <h2 className="font-serif text-2xl sm:text-3xl font-medium text-[#221A16]">
-              Turn your translated signals into clear action
+              Explore related resources
             </h2>
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-5 pt-2">

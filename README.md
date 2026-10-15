@@ -8,31 +8,31 @@ This repository combines the Nova GSK frontend, the Deha-Chitra FastAPI symptom-
 - `backend/` — FastAPI service, rule/data JSON files, tests and quality scripts.
 - `prototype-sakhi/` — earlier standalone React/Vite Sakhi prototype, kept separate because it is a different UI and package setup.
 
-## Run the main frontend
+## Run the main application
 
-Requirements: Node.js (use a current LTS release).
+Requirements: Node.js (use a current LTS release) and Python 3.10+ (Python 3.11+ recommended).
 
-```bash
-cd frontend
-npm install
-npm run dev
-```
-
-Vite will print the local URL. The frontend's current code may use its own AI/API integration; configure only the environment variables it actually needs, using `frontend/.env.example` as a template. Never commit `.env` files or API keys.
-
-## Run the backend
-
-Requirements: Python 3.10+ (Python 3.11+ recommended).
+Start the backend in one terminal:
 
 ```bash
 cd backend
 python -m venv .venv
-# Windows PowerShell: .venv\\Scripts\\Activate.ps1
+# Windows PowerShell: .venv\Scripts\Activate.ps1
 # macOS/Linux: source .venv/bin/activate
-python -m pip install --upgrade pip
-pip install -r requirements.txt
+python -m pip install -r requirements.txt
 uvicorn app:app --reload --port 8000
 ```
+
+Then start the frontend in a second terminal:
+
+```bash
+cd frontend
+npm install
+# Optional: copy frontend/.env.example to frontend/.env.local and edit VITE_BACKEND_URL.
+npm run dev
+```
+
+The frontend defaults to `http://127.0.0.1:8000`; configure `VITE_BACKEND_URL` if the backend uses a different URL. The symptom translator calls `POST /triage`, which normalizes the submitted text and returns matched concepts and non-diagnostic care guidance. Never commit `.env` files or API keys.
 
 API docs: http://127.0.0.1:8000/docs
 
@@ -57,7 +57,7 @@ The backend README in `backend/README.md` documents request examples and quality
 
 ## Important integration note
 
-The frontend and backend are placed together in one repository, but they have **not been fully wired together or end-to-end tested as one application**. The Sakhi prototype's README explicitly describes its analyzer as a local mock, and the Nova GSK frontend may have its own service/API requirements. Before deployment, configure the frontend to call the backend URL, set appropriate CORS origins, and test the request/response contract.
+The Nova GSK symptom translator is wired to the Deha-Chitra backend. The earlier `prototype-sakhi/` remains a separate prototype and is not connected to this API. For deployment, set `VITE_BACKEND_URL` to the backend's HTTPS URL and configure `CORS_ORIGINS` to allow the exact frontend origin.
 
 ## Health and privacy disclaimer
 
